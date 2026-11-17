@@ -1,146 +1,99 @@
-// The story of Neon Tide: five jobs for fixer Lucia Maré, told in phone briefs. Kiko,
-// a broke boat mechanic, steals, runs and fights his way from the marina to one last
-// sunset getaway. Each mission is a chain of stages — go somewhere, drive, pick up,
-// fight, escape — and finishing one pays cash, unlocks the next and saves the game.
-import { avenueX, avenueY } from './city.js';
-import { createPed } from './pedestrians.js';
-import { commitCrime } from './police.js';
-
-export const MISSIONS = [
-  {
-    id: 'first-wheels', title: 'First Wheels', giver: 'Lucia Maré',
-    brief: 'Kiko — the marina crew left a coupe by Plaza del Faro. Take it. Bring it to me at Solmar Marina, south-west. Try not to scratch it.',
-    reward: 250,
-    stages: [
-      { type: 'steal', label: 'Steal a car (walk up and press E)', x: avenueX(5) + 40, y: avenueY(5) + 30 },
-      { type: 'goto', label: 'Drive to Lucia at Solmar Marina', x: avenueX(1) + 30, y: avenueY(7) + 120, needsCar: true },
+'use strict';
+/* Five-job story chain: fixer Lucia Maré vs the Coral Kings gang. */
+window.NT = window.NT || {};
+NT.createMissions = function (world) {
+  const city = world.city;
+  const lm = (name) => city.landmarks.find((l) => l.name === name);
+  const m = {
+    index: 0, done: false, marker: null, objective: '', targetCar: null,
+    enemies: [], catchTime: 0, banner: '', bannerLife: 0,
+    jobs: [
+      { title: 'Wheels for Lucia', reward: 400, text: 'Steal the marked sports car for Lucia Maré.' },
+      { title: 'Run to the Marina', reward: 600, text: 'Drive the car to Solmar Marina.' },
+      { title: 'Kings on the Run', reward: 800, text: 'Chase down the Coral Kings driver. Stay on his tail!' },
+      { title: 'Trouble at Mercado Sol', reward: 1200, text: 'Clear the Coral Kings out of Mercado Sol.' },
+      { title: 'The Getaway', reward: 2000, text: 'Lose yourself at Club Neon Tide. Reach the hideout!' },
     ],
-  },
-  {
-    id: 'beach-run', title: 'Beach Run', giver: 'Lucia Maré',
-    brief: 'A cooler was left under the palms at the east boardwalk. Pick it up, drop it at Mercado Sol. The Kings are watching the beach — move.',
-    reward: 400,
-    stages: [
-      { type: 'goto', label: 'Pick up the cooler at the boardwalk', x: avenueX(9) + 60, y: avenueY(8) + 60 },
-      { type: 'goto', label: 'Deliver the cooler to Mercado Sol', x: avenueX(3) + 40, y: avenueY(3) + 40 },
-    ],
-  },
-  {
-    id: 'heat-check', title: 'Heat Check', giver: 'Lucia Maré',
-    brief: 'Bad news: a camera caught your face on that run. The PD is already rolling. Lose them — break sight, stay clean, let the stars fade.',
-    reward: 350,
-    stages: [
-      { type: 'escape', label: 'Lose the police (let the wanted stars fade)' },
-    ],
-  },
-  {
-    id: 'warehouse-job', title: 'Warehouse Job', giver: 'Lucia Maré',
-    brief: 'The Coral Kings took our Portside Warehouse. Take it back: three of them are inside. Fists or the pistol — your call, mechanic.',
-    reward: 650,
-    stages: [
-      { type: 'goto', label: 'Go to the Portside Warehouse', x: avenueX(9) + 50, y: avenueY(6) + 60 },
-      { type: 'fight', label: 'Clear the warehouse: beat the Coral Kings (0/3)', x: avenueX(9) + 50, y: avenueY(6) + 60, count: 3 },
-      { type: 'goto', label: 'Meet Lucia outside the warehouse', x: avenueX(9) - 60, y: avenueY(6) + 30 },
-    ],
-  },
-  {
-    id: 'sunset-run', title: 'Sunset Run', giver: 'Lucia Maré',
-    brief: 'Last job. The marina takings are in a bag at the warehouse. Grab it and reach Aero Solmar Gate before dark — every patrol in the bay will know your car.',
-    reward: 1200,
-    stages: [
-      { type: 'goto', label: 'Collect the bag at the Portside Warehouse', x: avenueX(9) + 50, y: avenueY(6) + 60 },
-      { type: 'goto', label: 'Reach Aero Solmar Gate — do not get busted', x: avenueX(0) + 60, y: avenueY(0) + 60, needsCar: true },
-    ],
-  },
-];
-
-export function createMissionState() {
-  return { index: 0, stage: 0, active: false, done: false, rivalsSpawned: false, rivalsBeaten: 0, message: '', messageTimer: 0 };
-}
-
-/** The current objective for the HUD: {label, x, y} or null in free roam between jobs. */
-export function currentObjective(state) {
-  if (state.done) return { label: 'Story complete — Solmar Bay is yours. Free roam!', x: null, y: null };
-  const mission = MISSIONS[state.index];
-  if (!state.active) return { label: `New job: "${mission.title}" — press Enter to take it`, x: null, y: null };
-  const stage = mission.stages[state.stage];
-  return { label: stage.label, x: stage.x ?? null, y: stage.y ?? null };
-}
-
-function announce(state, text, seconds = 5) { state.message = text; state.messageTimer = seconds; }
-
-export function startMission(world) {
-  const state = world.missions;
-  if (state.done || state.active) return;
-  state.active = true;
-  state.stage = 0;
-  state.rivalsSpawned = false;
-  state.rivalsBeaten = 0;
-  const mission = MISSIONS[state.index];
-  announce(state, `📱 ${mission.giver}: ${mission.brief}`, 9);
-  world.audio.missionDone();
-  if (mission.id === 'heat-check') commitCrime(world.wanted, 3);
-}
-
-/**
- * Advance the active mission against the world. Called every step; uses world.events
- * flags set by the player step (enteredCar) and plain positions for the rest.
- */
-export function updateMissions(random, world, dt) {
-  const state = world.missions;
-  if (state.messageTimer > 0) state.messageTimer -= dt;
-  if (!state.active || state.done) return;
-  const mission = MISSIONS[state.index];
-  const stage = mission.stages[state.stage];
-  const player = world.player;
-  const near = stage.x !== undefined && Math.hypot(player.x - stage.x, player.y - stage.y) < 42;
-
-  let stageDone = false;
-  if (stage.type === 'steal') {
-    if (player.inCar) stageDone = true;
-    else if (near) stageDone = false;
-  } else if (stage.type === 'goto') {
-    if (near && (!stage.needsCar || player.inCar)) stageDone = true;
-  } else if (stage.type === 'escape') {
-    if (world.wanted.stars === 0) stageDone = true;
-  } else if (stage.type === 'fight') {
-    if (!state.rivalsSpawned && near) {
-      state.rivalsSpawned = true;
-      for (let i = 0; i < stage.count; i += 1) {
-        const ped = createPed(random, stage.x + random.range(-70, 70), stage.y + random.range(-50, 50), { hostile: true, health: 70, shirt: '#8e44ad', name: 'Coral King' });
-        ped.missionRival = true;
-        world.peds.push(ped);
+    lm: { marina: lm('Solmar Marina'), mercado: lm('Mercado Sol'), club: lm('Club Neon Tide') },
+  };
+  m.startJob = function (w) {
+    const job = m.jobs[m.index];
+    if (!job) { m.done = true; m.objective = 'Free roam — Solmar Bay is yours.'; m.marker = null; return; }
+    m.objective = job.title + ': ' + job.text;
+    m.banner = 'JOB ' + (m.index + 1) + ' — ' + job.title; m.bannerLife = 4;
+    NT.toast(w, 'Lucia Maré: ' + job.text);
+    if (m.index === 0) {
+      let car = w.vehicles.parked.find((c) => c.type.kind === 'sport') || w.vehicles.parked[0];
+      car.missionCar = true; car.color = '#d32f2f';
+      car.x = w.city.cityW * 0.55; car.y = 3 * NT.config.pitch + NT.config.roadW / 2;
+      m.marker = { x: car.x, y: car.y, label: 'STEAL' };
+    } else if (m.index === 1) {
+      m.marker = { x: m.lm.marina.x, y: m.lm.marina.y, label: 'MARINA' };
+    } else if (m.index === 2) {
+      const type = NT.CAR_TYPES[4];
+      m.targetCar = { x: w.city.cityW * 0.7, y: 2 * NT.config.pitch + 18, angle: 0, speed: 60, type, color: '#7b1fa2', hp: 30, fleeCar: true };
+      w.vehicles.all.push(m.targetCar); w.vehicles.traffic.push(m.targetCar);
+      m.marker = { x: m.targetCar.x, y: m.targetCar.y, label: 'TARGET' };
+    } else if (m.index === 3) {
+      m.enemies = [];
+      for (let i = 0; i < 5; i++) {
+        m.enemies.push({ x: m.lm.mercado.x + (i - 2) * 26, y: m.lm.mercado.y + ((i % 2) ? 30 : -30), hp: 20, dead: false, color: '#8e24aa', shootCd: 1 + i * 0.4 });
       }
-      announce(state, 'Coral Kings: "Wrong warehouse, mechanic!"', 4);
-      commitCrime(world.wanted, 1);
+      m.marker = { x: m.lm.mercado.x, y: m.lm.mercado.y, label: 'SHOOTOUT' };
+    } else if (m.index === 4) {
+      NT.addHeat(w, 3.2, 'the getaway');
+      m.marker = { x: m.lm.club.x, y: m.lm.club.y, label: 'HIDEOUT' };
     }
-    if (state.rivalsSpawned) {
-      const beaten = world.peds.filter((p) => p.missionRival && p.dead).length;
-      state.rivalsBeaten = beaten;
-      stage.label = `Clear the warehouse: beat the Coral Kings (${beaten}/${stage.count})`;
-      if (beaten >= stage.count) stageDone = true;
+  };
+  m.completeJob = function (w) {
+    const job = m.jobs[m.index];
+    w.cash += job.reward;
+    if (w.audio) w.audio.pickup();
+    NT.floatText(w, w.player.x, w.player.y - 30, '+$' + job.reward, '#a5d6a7');
+    NT.toast(w, 'Job done. Lucia wired you $' + job.reward + '.');
+    m.index += 1;
+    if (m.targetCar) { m.targetCar.dead = true; m.targetCar = null; }
+    m.startJob(w);
+    NT.saveGame(w);
+  };
+  m.onEnterCar = function (w, car) {
+    if (m.index === 0 && car.missionCar) m.completeJob(w);
+  };
+  m.onPunch = function () {};
+  m.onShoot = function () {};
+  m.update = function (w, dt) {
+    if (m.bannerLife > 0) m.bannerLife -= dt;
+    if (m.done || !w.player) return;
+    const p = w.player;
+    if (m.index === 1 && p.car && m.marker && Math.hypot(p.x - m.marker.x, p.y - m.marker.y) < 64) m.completeJob(w);
+    else if (m.index === 2 && m.targetCar && !m.targetCar.dead) {
+      const t = m.targetCar;
+      t.angle = Math.atan2(t.y - p.y, t.x - p.x); // flee directly away, roads forgive
+      t.speed = Math.min(t.type.top * 0.72, t.speed + 60 * dt);
+      m.marker.x = t.x; m.marker.y = t.y;
+      const d = Math.hypot(p.x - t.x, p.y - t.y);
+      if (d < 46) { m.catchTime += dt; NT.floatText(w, t.x, t.y - 22, 'GOT HIM…', '#ffcc80'); if (m.catchTime > 1.2) m.completeJob(w); }
+      else m.catchTime = Math.max(0, m.catchTime - dt);
+    } else if (m.index === 3) {
+      let alive = 0;
+      for (const e of m.enemies) {
+        if (e.dead) continue; alive++;
+        e.shootCd -= dt;
+        const d = Math.hypot(p.x - e.x, p.y - e.y);
+        if (e.shootCd <= 0 && d < 210) {
+          e.shootCd = 1.3;
+          if (!p.car) { p.health -= 4; NT.floatText(w, p.x, p.y - 18, 'HIT', '#ef9a9a'); }
+          w.tracers.push({ x1: e.x, y1: e.y, x2: p.x, y2: p.y, life: 0.07 });
+          if (w.audio) w.audio.gunshot(true);
+        }
+      }
+      m.objective = m.jobs[3].title + ': Coral Kings left standing: ' + alive;
+      if (alive === 0) m.completeJob(w);
+    } else if (m.index === 4 && m.marker && Math.hypot(p.x - m.marker.x, p.y - m.marker.y) < 64) {
+      w.police.heat = 0; w.police.stars = 0; w.police.cars = [];
+      m.completeJob(w);
+      NT.toast(w, 'Lucia Maré: The bay is ours tonight. Free roam!');
     }
-  }
-
-  if (!stageDone) return;
-  // Sunset Run's pickup lights the city up.
-  if (mission.id === 'sunset-run' && state.stage === 0) commitCrime(world.wanted, 4);
-  state.stage += 1;
-  world.audio.pickup();
-  if (state.stage >= mission.stages.length) {
-    state.active = false;
-    state.stage = 0;
-    state.index += 1;
-    player.money += mission.reward;
-    world.audio.cash();
-    if (state.index >= MISSIONS.length) {
-      state.done = true;
-      announce(state, `🏆 Story complete! Final job paid $${mission.reward}. Solmar Bay is yours, Kiko.`, 10);
-    } else {
-      announce(state, `✔ Job done: "${mission.title}" — $${mission.reward} paid. Press Enter for the next job.`, 8);
-    }
-    world.saveGame();
-  } else {
-    announce(state, `▸ ${mission.stages[state.stage].label}`, 5);
-  }
-}
+  };
+  return m;
+};

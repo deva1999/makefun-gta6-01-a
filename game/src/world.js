@@ -1,113 +1,59 @@
-// The world: one state object holding the city, every car, pedestrian and officer, the
-// wanted level, the mission chain, effects and the camera — and the step that advances
-// them all in a fixed order: player, traffic, pedestrians, police, missions, effects.
-import { DAY_NIGHT, VIEW_HEIGHT, VIEW_WIDTH, WORLD_HEIGHT, WORLD_WIDTH, clockForTime, darknessForTime, phaseForTime } from './config.js';
-import { createRandom, clamp } from './random.js';
-import { avenueX, avenueY, createCity } from './city.js';
-import { spawnParkedCars, spawnTraffic, stepCar, trafficInput, collideCarWithCity } from './vehicles.js';
-import { spawnCrowd, stepPed } from './pedestrians.js';
-import { createPlayer, stepPlayer, damagePlayer } from './player.js';
-import { createWanted, updatePolice } from './police.js';
-import { createMissionState, updateMissions } from './missions.js';
-import { readSave, writeSave } from './save.js';
-
-export function createWorld(seed, audio) {
-  const random = createRandom(seed);
-  const city = createCity(random);
-  const cars = [...spawnParkedCars(random, city), ...spawnTraffic(random, city, 16)];
-  const world = {
-    seed, random, city, cars, audio,
-    peds: spawnCrowd(random, 34),
-    player: createPlayer(avenueX(5) + 44, avenueY(5) + 36),
-    wanted: createWanted(),
-    missions: createMissionState(),
-    effects: [],
-    danger: [],       // points pedestrians flee from, rebuilt each step
+'use strict';
+/* Game state, day/night clock helpers, camera. */
+window.NT = window.NT || {};
+NT.createWorld = function (seed) {
+  const cfg = NT.config;
+  const rng = NT.makeRng(seed * 1000 + 17);
+  const city = NT.buildCity(rng);
+  return {
+    seed, rng, city,
+    screen: 'title',            // title | playing | paused | busted | wasted
+    timeOfDay: cfg.startTimeOfDay,
+    clockFrozen: false,
+    elapsed: 0,
+    cash: 250,
+    dangerAt: -99, dangerX: 0, dangerY: 0,   // last gunshot / scare event
+    tracers: [],                // {x1,y1,x2,y2,life}
+    floaters: [],               // {x,y,text,life,color}
     camera: { x: 0, y: 0 },
-    time: 0,
-    // Day/night clock: timeOfDay in [0,1), frozen in screenshot mode.
-    timeOfDay: DAY_NIGHT.startTimeOfDay,
-    dayNightFrozen: false,
-    phase() { return phaseForTime(world.timeOfDay); },
-    clock() { return clockForTime(world.timeOfDay); },
-    darkness() { return darknessForTime(world.timeOfDay); },
-    saveGame() { return writeSave(world); },
-    applySave(data) {
-      world.player.money = data.money;
-      world.player.health = clamp(data.health || 100, 10, 100);
-      world.player.x = data.x; world.player.y = data.y;
-      world.player.carsStolen = data.carsStolen || 0;
-      world.missions.index = Math.min(data.missionIndex, 5);
-      world.missions.done = !!data.missionDone || world.missions.index >= 5;
-    },
-    hasSave() { return readSave() !== null; },
-    loadSave() { const data = readSave(); if (data) { world.applySave(data); return true; } return false; },
+    shake: 0,
   };
-  return world;
-}
-
-/** Simple car-to-car bumps: separate overlapping bodies and trade a little speed. */
-function collideCars(world) {
-  const cars = world.cars;
-  for (let i = 0; i < cars.length; i += 1) {
-    for (let j = i + 1; j < cars.length; j += 1) {
-      const a = cars[i]; const b = cars[j];
-      const dx = b.x - a.x; const dy = b.y - a.y;
-      const d = Math.hypot(dx, dy);
-      if (d > 0.01 && d < 30) {
-        const push = (30 - d) / 2;
-        const nx = dx / d; const ny = dy / d;
-        a.x -= nx * push; a.y -= ny * push;
-        b.x += nx * push; b.y += ny * push;
-        const avg = (a.speed + b.speed) / 2;
-        if (Math.abs(a.speed - b.speed) > 90) {
-          world.audio.crash(2);
-          a.health -= 4; b.health -= 4;
-          world.effects.push({ type: 'burst', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, life: 0.3, max: 0.3, color: '#f7d154' });
-        }
-        a.speed = avg * 0.8; b.speed = avg * 0.8;
-      }
-    }
-  }
-}
-
-export function stepWorld(world, input, dt) {
-  world.time += dt;
-  if (!world.dayNightFrozen) {
-    world.timeOfDay = (world.timeOfDay + dt / DAY_NIGHT.cycleSeconds) % 1;
-  }
-  world.danger.length = 0;
-  stepPlayer(world, input, dt);
-  if (world.player.inCar && Math.abs(world.player.inCar.speed) > 190) {
-    world.danger.push({ x: world.player.x, y: world.player.y });
-  }
-  // Traffic drives itself; the player's car is stepped in stepPlayer.
-  for (const car of world.cars) {
-    if (car.driver === 'traffic') {
-      stepCar(car, dt, trafficInput(world.random, car, world.cars, dt));
-      collideCarWithCity(world.city, car);
-      car.x = clamp(car.x, 22, WORLD_WIDTH - 22);
-      car.y = clamp(car.y, 22, WORLD_HEIGHT - 22);
-    } else if (car.driver === null && Math.abs(car.speed) > 1) {
-      stepCar(car, dt, { throttle: 0, steer: 0, brake: true });
-    }
-  }
-  collideCars(world);
-  // Pedestrians; hostile rivals report their hits on the player.
-  for (const ped of world.peds) {
-    const out = { struckPlayer: false };
-    stepPed(world.random, world.city, ped, dt, world.danger, world.player.inCar ? null : world.player, out);
-    if (out.struckPlayer) damagePlayer(world, 9);
-  }
-  updatePolice(world.random, world, dt);
-  updateMissions(world.random, world, dt);
-  // Effects fade.
-  for (let i = world.effects.length - 1; i >= 0; i -= 1) {
-    world.effects[i].life -= dt;
-    if (world.effects[i].life <= 0) world.effects.splice(i, 1);
-  }
-  // Camera: follow the player (or the car), clamped to the world.
-  const focusX = world.player.x; const focusY = world.player.y;
-  world.camera.x = clamp(focusX - VIEW_WIDTH / 2, 0, Math.max(0, WORLD_WIDTH - VIEW_WIDTH));
-  world.camera.y = clamp(focusY - VIEW_HEIGHT / 2, 0, Math.max(0, WORLD_HEIGHT - VIEW_HEIGHT));
-}
+};
+NT.advanceClock = function (world, dt) {
+  if (world.clockFrozen) return;
+  world.timeOfDay = (world.timeOfDay + dt / NT.config.dayLengthSec) % 1;
+};
+NT.phaseOf = function (t) {
+  if (t < 0.21) return 'Night';
+  if (t < 0.29) return 'Dawn';
+  if (t < 0.66) return 'Day';
+  if (t < 0.80) return 'Dusk';
+  return 'Night';
+};
+/* 0 in full day, 1 in deep night; smooth shoulders at dawn/dusk. */
+NT.darknessOf = function (t) {
+  const sun = Math.sin((t - 0.25) * Math.PI * 2); // peaks near mid-afternoon
+  if (sun >= 0.25) return 0;
+  if (sun <= -0.45) return 1;
+  return (0.25 - sun) / 0.7;
+};
+NT.clockText = function (t) {
+  const mins = Math.floor(t * 24 * 60);
+  const hh = String(Math.floor(mins / 60)).padStart(2, '0');
+  const mm = String(mins % 60).padStart(2, '0');
+  return hh + ':' + mm;
+};
+NT.phaseIcon = function (t) {
+  const p = NT.phaseOf(t);
+  return p === 'Day' ? '☀' : p === 'Night' ? '☾' : p === 'Dawn' ? '◐' : '◑';
+};
+NT.updateCamera = function (world, focusX, focusY, dt) {
+  const cfg = NT.config;
+  const tx = focusX - cfg.viewW / 2, ty = focusY - cfg.viewH / 2;
+  const k = Math.min(1, dt * 6 + 0.2);
+  world.camera.x += (tx - world.camera.x) * k;
+  world.camera.y += (ty - world.camera.y) * k;
+  world.camera.x = Math.max(0, Math.min(world.city.worldW - cfg.viewW, world.camera.x));
+  world.camera.y = Math.max(0, Math.min(world.city.worldH - cfg.viewH, world.camera.y));
+  if (world.shake > 0) world.shake = Math.max(0, world.shake - dt * 26);
+};

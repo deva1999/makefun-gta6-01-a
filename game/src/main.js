@@ -1,126 +1,107 @@
-// Neon Tide: Solmar Bay — boot and the main loop. The world advances in fixed 1/60 s
-// steps; screens (title, play, paused, busted, wasted) gate what steps and what draws.
-// ?seed=N fixes the city. ?shot=start|foot|drive|chase&seed=N stages a deterministic
-// scene for screenshots, paints it twice and sets window.__shotReady.
-import { STEP } from './config.js';
-import { createWorld, stepWorld } from './world.js';
-import { createInput, ACTION_ENTER_CAR, ACTION_JOB, ACTION_PAUSE, ACTION_PUNCH, ACTION_SAVE, ACTION_MUTE, ACTION_CONFIRM } from './input.js';
-import { createRenderer } from './render.js';
-import { drawHUD, drawScreen, SCREEN_BUSTED, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WASTED } from './hud.js';
-import { createAudio } from './audio.js';
-import { enterCar, exitCar, tryPunch, respawnPlayer } from './player.js';
-import { startMission } from './missions.js';
-import { applyBust } from './police.js';
-import { stageShot } from './shots.js';
+'use strict';
+/* Boot, game loop, screen states, module wiring. */
+window.NT = window.NT || {};
+(function () {
+  const cfg = NT.config;
+  const canvas = document.getElementById('game');
+  canvas.width = cfg.viewW; canvas.height = cfg.viewH;
+  const ctx = canvas.getContext('2d');
+  const seed = NT.seedFromUrl();
+  const world = NT.createWorld(seed);
+  world.audio = NT.createAudio();
+  world.input = NT.createInput(canvas);
+  world.input.bindWorld(world);
+  world.vehicles = NT.buildVehicles(world);
+  world.peds = NT.buildPeds(world);
+  world.police = NT.createPolice();
+  world.player = NT.createPlayer(world);
+  world.missions = NT.createMissions(world);
+  world.toastText = ''; world.toastLife = 0;
+  NT.applySave(world, NT.loadGame());
+  world.missions.startJob(world);
+  world.camera.x = world.player.x - cfg.viewW / 2;
+  world.camera.y = world.player.y - cfg.viewH / 2;
+  window.__NT_WORLD = world; // handle for automated playtest harnesses
+  const shot = NT.shotName();
+  if (shot) NT.applyShot(world, shot);
+  let saveTimer = 0, last = performance.now();
 
-const MAX_FRAME = 0.25;
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : 20261117;
-
-const canvas = document.getElementById('game');
-const status = document.getElementById('status');
-const audio = createAudio();
-const world = createWorld(seed, audio);
-const renderer = createRenderer(canvas);
-const ctx = renderer.ctx;
-
-function announce(message) { status.textContent = message; }
-
-function draw(screen) {
-  renderer.drawWorld(world);
-  drawHUD(ctx, world, screen);
-  drawScreen(ctx, world, screen, world.hasSave());
-}
-
-function runShot(name) {
-  const scene = stageShot(name, world);
-  let painted = 0;
-  function paint() {
-    draw(scene.screen);
-    painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
+  function resetAfterEnd(kind) {
+    const p = world.player;
+    p.dead = false; p.health = cfg.playerHealth; p.car = null;
+    p.x = world.city.cityW * 0.42; p.y = world.city.cityH * 0.52;
+    world.police.stars = 0; world.police.heat = 0; world.police.bust = 0; world.police.cars = [];
+    if (kind === 'busted') world.cash = Math.max(0, world.cash - 150);
+    world.screen = 'playing';
+    NT.toast(world, kind === 'busted' ? 'Released. The fine stung.' : 'Patched up at Solmar Clinic.');
+    NT.saveGame(world);
   }
-  requestAnimationFrame(paint);
-}
-
-function runGame() {
-  const input = createInput(canvas);
-  let screen = SCREEN_TITLE;
-  let accumulator = 0;
-  let last = performance.now();
-  let bustedTimer = 0;
-
-  function beginPlay(continued) {
-    if (continued) world.loadSave();
-    screen = SCREEN_PLAY;
-    announce(continued ? 'Welcome back to Solmar Bay.' : 'Neon Tide. Press Enter to take your first job.');
-  }
-
-  function handleActions() {
-    const actions = input.takeActions();
-    if (actions & ACTION_MUTE) { audio.unlock(); announce(audio.toggleMute() ? 'Sound off.' : 'Sound on.'); }
-    if (screen === SCREEN_TITLE) {
-      if (actions & (ACTION_CONFIRM | ACTION_JOB)) { audio.unlock(); audio.click(); beginPlay(world.hasSave()); }
-      return;
-    }
-    if (screen === SCREEN_BUSTED || screen === SCREEN_WASTED) {
-      if (actions & (ACTION_CONFIRM | ACTION_JOB)) { respawnPlayer(world); screen = SCREEN_PLAY; }
-      return;
-    }
-    if (actions & ACTION_PAUSE) {
-      screen = screen === SCREEN_PAUSED ? SCREEN_PLAY : SCREEN_PAUSED;
-      announce(screen === SCREEN_PAUSED ? 'Paused.' : 'Playing.');
-      return;
-    }
-    if (screen !== SCREEN_PLAY) return;
-    if (actions & ACTION_ENTER_CAR) {
-      if (world.player.inCar) exitCar(world);
-      else enterCar(world);
-    }
-    if (actions & ACTION_JOB) startMission(world);
-    if (actions & ACTION_PUNCH) tryPunch(world);
-    if (actions & ACTION_SAVE) {
-      if (world.saveGame()) { world.missions.message = '💾 Saved — cash, story and position kept in this browser.'; world.missions.messageTimer = 3; }
+  function handleScreenKeys() {
+    const pressed = world.input.pressed;
+    if (world.screen === 'title' && pressed.has('Enter')) {
+      world.screen = 'playing'; world.audio.start();
+      NT.toast(world, 'Lucia Maré has work for you. Follow the yellow marker.');
+    } else if ((world.screen === 'busted' || world.screen === 'wasted') && pressed.has('Enter')) {
+      resetAfterEnd(world.screen);
+    } else if (world.screen === 'playing' && (pressed.has('KeyP') || pressed.has('Escape'))) {
+      world.screen = 'paused';
+    } else if (world.screen === 'paused' && (pressed.has('KeyP') || pressed.has('Escape') || pressed.has('Enter'))) {
+      world.screen = 'playing';
     }
   }
-
+  function update(dt) {
+    world.elapsed += dt;
+    NT.advanceClock(world, dt);
+    NT.updatePlayer(world, dt);
+    NT.updateTraffic(world, world.vehicles, dt);
+    NT.updatePeds(world, world.peds, dt);
+    NT.updatePolice(world, dt);
+    world.missions.update(world, dt);
+    const p = world.player;
+    NT.updateCamera(world, p.x, p.y, dt);
+    world.audio.setEngine(p.car ? p.car.speed / p.car.type.top : 0, !!p.car);
+    saveTimer += dt;
+    if (saveTimer > 6) { saveTimer = 0; NT.saveGame(world); }
+  }
+  function overlay(title, sub, color) {
+    ctx.fillStyle = 'rgba(5,10,18,0.62)'; ctx.fillRect(0, 0, cfg.viewW, cfg.viewH);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = color; ctx.font = 'bold 64px system-ui';
+    ctx.fillText(title, cfg.viewW / 2, cfg.viewH / 2 - 30);
+    ctx.fillStyle = '#eceff1'; ctx.font = '20px system-ui';
+    ctx.fillText(sub, cfg.viewW / 2, cfg.viewH / 2 + 14);
+    ctx.textAlign = 'left';
+  }
   function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    handleScreenKeys();
+    if (world.screen === 'playing') update(dt);
+    // decay transient effects in every state so poses stay clean
+    world.tracers = world.tracers.filter((t) => (t.life -= dt) > 0);
+    world.floaters = world.floaters.filter((f) => (f.life -= dt) > 0);
+    if (world.toastLife > 0) world.toastLife -= dt;
+    NT.render(world, ctx);
+    if (world.screen === 'playing' || world.screen === 'paused') NT.renderHud(world, ctx);
+    if (world.screen === 'title') {
+      ctx.fillStyle = 'rgba(10,8,24,0.35)'; ctx.fillRect(0, 0, cfg.viewW, cfg.viewH);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff7043'; ctx.font = 'bold 84px system-ui';
+      ctx.fillText('NEON TIDE', cfg.viewW / 2, 250);
+      ctx.fillStyle = '#4dd0e1'; ctx.font = 'bold 40px system-ui';
+      ctx.fillText('S O L M A R   B A Y', cfg.viewW / 2, 305);
+      ctx.fillStyle = '#ffffff'; ctx.font = '20px system-ui';
+      ctx.fillText('An open-world bay city of hot cars, hotter nights, and Lucia Maré.', cfg.viewW / 2, 360);
+      ctx.font = 'bold 22px system-ui'; ctx.fillStyle = '#ffe082';
+      ctx.fillText('Press ENTER to start', cfg.viewW / 2, 430);
+      ctx.fillStyle = '#cfd8dc'; ctx.font = '15px system-ui';
+      ctx.fillText('WASD drive & walk · E enter/exit car · mouse aim, click shoot · F punch · P pause', cfg.viewW / 2, 466);
+      ctx.fillText(NT.phaseIcon(world.timeOfDay) + ' ' + NT.clockText(world.timeOfDay) + ' — the bay never sleeps', cfg.viewW / 2, 494);
+      ctx.textAlign = 'left';
+    } else if (world.screen === 'paused') overlay('PAUSED', 'P / Esc / Enter to resume', '#ffe082');
+    else if (world.screen === 'busted') overlay('BUSTED', 'The Solmar PD boxed you in. Press ENTER — fine: $150', '#ef5350');
+    else if (world.screen === 'wasted') overlay('WASTED', 'You wake up at Solmar Clinic. Press ENTER', '#b0bec5');
+    world.input.endFrame();
     requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
-    last = now;
-    handleActions();
-    if (screen === SCREEN_PLAY || screen === SCREEN_TITLE) {
-      while (accumulator >= STEP) {
-        stepWorld(world, input, STEP);
-        accumulator -= STEP;
-        if (world.wanted.busted && screen === SCREEN_PLAY) {
-          const fine = applyBust(world);
-          world.missions.message = `🚔 Busted! Fine $${fine}.`;
-          world.missions.messageTimer = 4;
-          screen = SCREEN_BUSTED;
-          bustedTimer = 0;
-          audio.busted();
-          break;
-        }
-        if (world.player.dead && screen === SCREEN_PLAY) { screen = SCREEN_WASTED; audio.busted(); break; }
-      }
-    } else {
-      accumulator = 0;
-    }
-    const driving = world.player.inCar ? world.player.inCar.speed : null;
-    audio.update(1 / 60, driving, screen === SCREEN_PLAY ? world.wanted.stars : 0, screen === SCREEN_TITLE);
-    draw(screen);
   }
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === SCREEN_PLAY) screen = SCREEN_PAUSED;
-  });
-  announce('Neon Tide: Solmar Bay. Press Enter to start.');
   requestAnimationFrame(frame);
-}
-
-if (shot) runShot(shot);
-else runGame();
+})();

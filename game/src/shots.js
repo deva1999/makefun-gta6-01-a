@@ -1,93 +1,48 @@
-// Deterministic screenshot scenes, selected with ?shot=start|foot|drive|chase&seed=N.
-// Each scene builds the real world with the seed, places Kiko and the cast for a composed
-// but honest frame — real traffic, real crowds, real police — steps the simulation a
-// fixed number of ticks, and reports which screen to draw over it.
-import { STEP } from './config.js';
-import { avenueX, avenueY } from './city.js';
-import { SCREEN_PLAY, SCREEN_TITLE } from './hud.js';
-import { startMission } from './missions.js';
-import { commitCrime } from './police.js';
-import { stepWorld } from './world.js';
-import { createCar } from './vehicles.js';
-
-function fakeInput({ throttle = 0, steer = 0, axis = { x: 0, y: 0 } } = {}) {
-  return {
-    axis: () => axis,
-    drive: () => ({ throttle, steer, brake: false, sprint: false }),
-    mouse: () => ({ x: 900, y: 300, down: false }),
-    takeActions: () => 0,
+'use strict';
+/* Screenshot poses for ?shot=<name>&seed=<n>: deterministic, clock frozen. */
+window.NT = window.NT || {};
+NT.shotName = function () {
+  const s = new URLSearchParams(location.search).get('shot');
+  return NT.config.shotNames.includes(s) ? s : null;
+};
+NT.applyShot = function (world, name) {
+  const cfg = NT.config, city = world.city, p = world.player;
+  world.clockFrozen = true;
+  world.shotMode = true;
+  const avenueY = 4 * cfg.pitch + cfg.roadW / 2;
+  const downtownX = 5 * cfg.pitch + cfg.roadW / 2;
+  const putInCar = (x, y, angle, speed, kind) => {
+    let car = world.vehicles.parked.find((c) => c.type.kind === kind) || world.vehicles.parked[0];
+    car.parked = false; car.driver = 'player';
+    car.x = x; car.y = y; car.angle = angle; car.speed = speed;
+    p.car = car; p.x = x; p.y = y; p.angle = angle;
+    return car;
   };
-}
-
-function settle(world, input, seconds) {
-  const steps = Math.round(seconds / STEP);
-  for (let i = 0; i < steps; i += 1) stepWorld(world, input, STEP);
-}
-
-function nearestParked(world, x, y) {
-  let best = null; let bestD = Infinity;
-  for (const car of world.cars) {
-    if (car.driver !== null || car.police) continue;
-    const d = Math.hypot(car.x - x, car.y - y);
-    if (d < bestD) { bestD = d; best = car; }
+  if (name === 'title') {
+    world.timeOfDay = 0.76; world.screen = 'title';
+    p.x = downtownX; p.y = avenueY; p.car = null;
+  } else if (name === 'foot') {
+    world.timeOfDay = 0.45; world.screen = 'playing';
+    p.x = downtownX; p.y = avenueY; p.car = null; p.angle = -0.6;
+    world.peds.slice(0, 4).forEach((ped, i) => { ped.x = p.x + 40 + i * 22; ped.y = p.y - 26 + i * 14; });
+  } else if (name === 'drive') {
+    world.timeOfDay = 0.50; world.screen = 'playing';
+    putInCar(downtownX - 60, avenueY + 9, 0, 86, 'sedan');
+    world.vehicles.traffic.slice(0, 4).forEach((car, i) => {
+      car.axis = 'h'; car.angle = i % 2 ? Math.PI : 0;
+      car.x = downtownX + (i - 1.5) * 130; car.y = avenueY + (i % 2 ? -9 : 9); car.speed = 55;
+    });
+  } else if (name === 'chase') {
+    world.timeOfDay = 0.92; world.screen = 'playing';
+    putInCar(downtownX + 40, avenueY + 9, 0, 130, 'sport');
+    world.police.stars = 3; world.police.heat = 3.4;
+    for (let i = 0; i < 3; i++) {
+      world.police.cars.push({
+        x: p.x - 90 - i * 64, y: avenueY + (i % 2 ? -10 : 10),
+        angle: 0, speed: 120, type: NT.CAR_TYPES[0], color: '#263238', cop: true, hp: 40,
+      });
+    }
   }
-  return best;
-}
-
-function putPlayerInCar(world, car, x, y, angle, speed) {
-  car.x = x; car.y = y; car.angle = angle; car.speed = speed;
-  car.driver = 'player';
-  world.player.inCar = car;
-  world.player.x = x; world.player.y = y;
-}
-
-// Pinned time-of-day per shot state (frozen in shot mode): title at dusk,
-// foot/drive in day, chase at night so headlights + police lights show.
-export const SHOT_TIMES = { start: 0.76, title: 0.76, foot: 0.45, drive: 0.50, chase: 0.92 };
-
-export function stageShot(name, world) {
-  const player = world.player;
-  world.timeOfDay = SHOT_TIMES[name] ?? 0.5;
-  world.dayNightFrozen = true;
-  if (name === 'foot') {
-    startMission(world);
-    world.missions.messageTimer = 0;
-    player.x = avenueX(3) + 26; player.y = avenueY(3) + 44;
-    player.angle = 0.4;
-    settle(world, fakeInput({ axis: { x: 0, y: 0 } }), 1.6);
-    return { screen: SCREEN_PLAY };
-  }
-  if (name === 'drive') {
-    startMission(world);
-    world.missions.index = 0;
-    world.missions.active = true;
-    world.missions.stage = 1; // objective: drive to the marina
-    world.missions.messageTimer = 0;
-    const car = nearestParked(world, avenueX(4), avenueY(4));
-    putPlayerInCar(world, car, avenueX(4) + 11, avenueY(4) + 190, 0, 150);
-    settle(world, fakeInput({ throttle: 0.85 }), 1.1);
-    return { screen: SCREEN_PLAY };
-  }
-  if (name === 'chase') {
-    world.missions.index = 4;
-    world.missions.active = true;
-    world.missions.stage = 1; // objective: reach Aero Solmar Gate
-    world.missions.done = false;
-    const car = nearestParked(world, avenueX(6), avenueY(3));
-    putPlayerInCar(world, car, avenueX(6) - 11, avenueY(2) + 60, Math.PI / 2, 205);
-    commitCrime(world.wanted, 4);
-    world.wanted.stars = 3;
-    // Patrol cars already on his tail, close enough to read in the frame.
-    const cop1 = createCar(world.random, car.x - 24, car.y - 96, Math.PI / 2, { police: true, driver: 'police', color: '#f4f6f8' });
-    const cop2 = createCar(world.random, car.x + 22, car.y - 168, Math.PI / 2, { police: true, driver: 'police', color: '#f4f6f8' });
-    cop1.speed = 215; cop2.speed = 208;
-    world.cars.push(cop1, cop2);
-    settle(world, fakeInput({ throttle: 0.9 }), 0.7);
-    world.wanted.stars = 3; // the settle may cool nothing, but keep the frame honest at 3
-    return { screen: SCREEN_PLAY };
-  }
-  // start: the title over a living city — let traffic roll behind the logo.
-  player.x = avenueX(5) + 44; player.y = avenueY(2) + 60;
-  settle(world, fakeInput(), 2.2);
-  return { screen: SCREEN_TITLE };
-}
+  world.camera.x = Math.max(0, Math.min(city.worldW - cfg.viewW, p.x - cfg.viewW / 2));
+  world.camera.y = Math.max(0, Math.min(city.worldH - cfg.viewH, p.y - cfg.viewH / 2));
+};

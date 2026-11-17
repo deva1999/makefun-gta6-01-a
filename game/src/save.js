@@ -1,36 +1,34 @@
-// The save: one localStorage slot holding money, story progress, position, health and
-// the car Kiko was last driving. Saving happens on every job done and on demand (F5);
-// the title screen offers Continue when a save exists. Corrupt saves are ignored.
-import { SAVE_KEY } from './config.js';
-
-export function readSave() {
+'use strict';
+/* localStorage save: cash, mission progress, player position. */
+window.NT = window.NT || {};
+NT.saveGame = function (world) {
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
+    const data = {
+      cash: world.cash,
+      missionIndex: world.missions ? world.missions.index : 0,
+      x: Math.round(world.player ? world.player.x : 0),
+      y: Math.round(world.player ? world.player.y : 0),
+    };
+    localStorage.setItem(NT.config.saveKey, JSON.stringify(data));
+  } catch (e) { /* storage may be unavailable; the game still runs */ }
+};
+NT.loadGame = function () {
+  try {
+    const raw = localStorage.getItem(NT.config.saveKey);
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (typeof data !== 'object' || data === null) return null;
-    if (typeof data.money !== 'number' || typeof data.missionIndex !== 'number') return null;
     return data;
-  } catch { return null; }
-}
-
-export function writeSave(world) {
-  try {
-    const p = world.player;
-    const data = {
-      money: p.money,
-      missionIndex: world.missions.index,
-      missionDone: world.missions.done,
-      x: Math.round(p.x), y: Math.round(p.y),
-      health: Math.round(p.health),
-      carsStolen: p.carsStolen, jobsDone: world.missions.index,
-      savedAt: Date.now(),
-    };
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-    return true;
-  } catch { return false; }
-}
-
-export function clearSave() {
-  try { window.localStorage.removeItem(SAVE_KEY); } catch { /* storage off */ }
-}
+  } catch (e) { return null; }
+};
+NT.applySave = function (world, data) {
+  if (!data) return;
+  if (Number.isFinite(data.cash)) world.cash = data.cash;
+  if (world.player && Number.isFinite(data.x) && Number.isFinite(data.y)) {
+    const fixed = world.city.collide(data.x, data.y, NT.config.playerRadius);
+    world.player.x = fixed.x; world.player.y = fixed.y;
+  }
+  if (world.missions && Number.isInteger(data.missionIndex)) {
+    world.missions.index = Math.max(0, Math.min(world.missions.jobs.length, data.missionIndex));
+  }
+};
