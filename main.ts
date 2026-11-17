@@ -8,14 +8,46 @@
 //
 // MAKEFUN_OUTPUT_DIR stands in for /output outside the grader; when it is unset the
 // program writes to /output, as the grader expects.
+//
+// Before copying anything, the program validates the two things a broken checkout most
+// often gets wrong — a missing game/index.html and a screenshots/ folder that is empty,
+// oversized or holding a file over the gate's 256 KiB cap — and refuses with a plain
+// message instead of handing in an entry the scorer would turn away unread.
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
 const repoRoot = fileURLToPath(new URL('.', import.meta.url));
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+const SCREENSHOT_MAX_BYTES = 262144; // the gate's 256 KiB per screenshot
+const IMAGE_NAME = /\.(png|jpe?g)$/i;
+
+function fail(message: string): never {
+  throw new Error(`neon-tide entry: ${message}`);
+}
+
+function validateInputs(): void {
+  const indexHtml = join(repoRoot, 'game', 'index.html');
+  if (!existsSync(indexHtml) || !statSync(indexHtml).isFile()) {
+    fail('game/index.html is missing — the game tree is incomplete.');
+  }
+  const shotsDir = join(repoRoot, 'screenshots');
+  if (!existsSync(shotsDir)) fail('screenshots/ is missing — the gate requires 3 or 4 screenshots.');
+  const shots = readdirSync(shotsDir).filter((name) => !name.startsWith('.') && IMAGE_NAME.test(name));
+  if (shots.length < 3 || shots.length > 4) {
+    fail(`screenshots/ holds ${shots.length} image(s); the gate requires 3 or 4.`);
+  }
+  for (const name of shots) {
+    const size = statSync(join(shotsDir, name)).size;
+    if (size > SCREENSHOT_MAX_BYTES) {
+      fail(`screenshots/${name} is ${size} bytes, over the gate's ${SCREENSHOT_MAX_BYTES}-byte cap.`);
+    }
+    if (size === 0) fail(`screenshots/${name} is empty.`);
+  }
+}
 
 function copyTree(fromName: string, toName: string): void {
   const from = join(repoRoot, fromName);
@@ -24,6 +56,7 @@ function copyTree(fromName: string, toName: string): void {
   if (existsSync(from)) cpSync(from, to, { recursive: true });
 }
 
+validateInputs();
 mkdirSync(outputDir, { recursive: true });
 copyTree('game', 'game');
 copyTree('screenshots', 'screenshots');
