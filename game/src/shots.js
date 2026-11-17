@@ -56,6 +56,7 @@ export function stageShot(name, world) {
     world.missions.index = 0;
     world.missions.active = true;
     world.missions.stage = 1; // objective: drive to the marina
+    world.missions.messageTimer = 0;
     const car = nearestParked(world, avenueX(4), avenueY(4));
     putPlayerInCar(world, car, avenueX(4) + 11, avenueY(4) + 190, 0, 150);
     settle(world, fakeInput({ throttle: 0.85 }), 1.1);
@@ -67,12 +68,12 @@ export function stageShot(name, world) {
     world.missions.stage = 1; // objective: reach Aero Solmar Gate
     world.missions.done = false;
     const car = nearestParked(world, avenueX(6), avenueY(3));
-    putPlayerInCar(world, car, avenueX(6) + 11, avenueY(3) + 150, 0, 205);
+    putPlayerInCar(world, car, avenueX(6) - 11, avenueY(2) + 60, Math.PI / 2, 205);
     commitCrime(world.wanted, 4);
     world.wanted.stars = 3;
     // Patrol cars already on his tail, close enough to read in the frame.
-    const cop1 = createCar(world.random, car.x - 92, car.y - 26, 0.1, { police: true, driver: 'police', color: '#f4f6f8' });
-    const cop2 = createCar(world.random, car.x - 150, car.y + 34, -0.08, { police: true, driver: 'police', color: '#f4f6f8' });
+    const cop1 = createCar(world.random, car.x - 24, car.y - 96, Math.PI / 2, { police: true, driver: 'police', color: '#f4f6f8' });
+    const cop2 = createCar(world.random, car.x + 22, car.y - 168, Math.PI / 2, { police: true, driver: 'police', color: '#f4f6f8' });
     cop1.speed = 215; cop2.speed = 208;
     world.cars.push(cop1, cop2);
     settle(world, fakeInput({ throttle: 0.9 }), 0.7);

@@ -59,7 +59,7 @@ function drawMinimap(ctx, world) {
 
 function drawStars(ctx, world) {
   const stars = world.wanted.stars;
-  const x = VIEW_WIDTH - 232; const y = 196;
+  const x = VIEW_WIDTH - 232; const y = 230;
   ctx.font = '26px system-ui, sans-serif';
   ctx.textAlign = 'left';
   for (let i = 0; i < 5; i += 1) {
@@ -113,7 +113,8 @@ export function drawHUD(ctx, world, screen) {
   if (world.missions.messageTimer > 0 && world.missions.message) {
     const msg = world.missions.message;
     ctx.font = '13.5px system-ui, sans-serif';
-    const mw = Math.min(620, ctx.measureText(msg).width + 30);
+    if (ctx.measureText(msg).width > 950) ctx.font = '11.5px system-ui, sans-serif';
+    const mw = Math.min(980, ctx.measureText(msg).width + 30);
     panel(ctx, VIEW_WIDTH / 2 - mw / 2, 84, mw, 34, 0.78);
     ctx.fillStyle = '#eaf6ff';
     ctx.fillText(msg, VIEW_WIDTH / 2, 106);

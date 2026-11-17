@@ -207,6 +207,9 @@ function drawPlayer(ctx, world, cam) {
   if (p.inCar || p.dead) return;
   const x = p.x - cam.x; const y = p.y - cam.y;
   const bob = Math.sin(p.walkPhase) * 1.8;
+  ctx.strokeStyle = 'rgba(255,217,61,0.85)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(x, y + 4, 15, 8, 0, 0, Math.PI * 2); ctx.stroke();
   ctx.fillStyle = 'rgba(40,30,10,0.25)';
   ctx.beginPath(); ctx.ellipse(x + 3, y + 6, 10, 5, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#173f35';
