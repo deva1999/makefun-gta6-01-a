@@ -14,6 +14,48 @@ export const WORLD_HEIGHT = ROWS * PITCH + ROAD + 190; // extra strip: beach and
 
 export const SAVE_KEY = 'neon-tide-solmar-bay-save-v1';
 
+// Day/night cycle: timeOfDay is in [0,1) — 0 = midnight, 0.25 = 06:00,
+// 0.5 = noon, 0.75 = 18:00. A full cycle lasts `cycleSeconds` of play and
+// the game starts in late afternoon so dusk arrives soon after starting.
+export const DAY_NIGHT = {
+  cycleSeconds: 240,
+  startTimeOfDay: 0.70, // 16:48 — late afternoon
+};
+
+/** Phase name for a time-of-day: 'day' | 'dusk' | 'night' | 'dawn'. */
+export function phaseForTime(tod) {
+  const t = ((tod % 1) + 1) % 1;
+  if (t >= 0.29 && t < 0.71) return 'day';
+  if (t >= 0.71 && t < 0.83) return 'dusk';
+  if (t >= 0.21 && t < 0.29) return 'dawn';
+  return 'night';
+}
+
+/** "HH:MM" clock string derived from a time-of-day in [0,1). */
+export function clockForTime(tod) {
+  const total = Math.floor((((tod % 1) + 1) % 1) * 24 * 60);
+  const hh = String(Math.floor(total / 60)).padStart(2, '0');
+  const mm = String(total % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function smoothRamp(tod, from, to) {
+  // Linear ramp 0->1 as tod moves from `from` to `to` (no wrap).
+  if (tod <= from) return 0;
+  if (tod >= to) return 1;
+  return (tod - from) / (to - from);
+}
+
+/** Darkness 0 (full day) .. 1 (deep night), smooth through dusk and dawn. */
+export function darknessForTime(tod) {
+  const t = ((tod % 1) + 1) % 1;
+  if (t >= 0.29 && t <= 0.67) return 0;
+  if (t > 0.67 && t < 0.83) return smoothRamp(t, 0.67, 0.83);
+  if (t >= 0.83 || t <= 0.21) return 1;
+  // dawn: 0.21 -> 0.29 fades back to day
+  return 1 - smoothRamp(t, 0.21, 0.29);
+}
+
 export const PALETTE = {
   water: '#1f8a9c', waterDeep: '#14616f', foam: '#bfeef2',
   sand: '#eedaa4', sandDark: '#e0c586',

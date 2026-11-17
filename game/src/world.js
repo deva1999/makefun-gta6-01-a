@@ -1,7 +1,7 @@
 // The world: one state object holding the city, every car, pedestrian and officer, the
 // wanted level, the mission chain, effects and the camera — and the step that advances
 // them all in a fixed order: player, traffic, pedestrians, police, missions, effects.
-import { VIEW_HEIGHT, VIEW_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
+import { DAY_NIGHT, VIEW_HEIGHT, VIEW_WIDTH, WORLD_HEIGHT, WORLD_WIDTH, clockForTime, darknessForTime, phaseForTime } from './config.js';
 import { createRandom, clamp } from './random.js';
 import { avenueX, avenueY, createCity } from './city.js';
 import { spawnParkedCars, spawnTraffic, stepCar, trafficInput, collideCarWithCity } from './vehicles.js';
@@ -25,6 +25,12 @@ export function createWorld(seed, audio) {
     danger: [],       // points pedestrians flee from, rebuilt each step
     camera: { x: 0, y: 0 },
     time: 0,
+    // Day/night clock: timeOfDay in [0,1), frozen in screenshot mode.
+    timeOfDay: DAY_NIGHT.startTimeOfDay,
+    dayNightFrozen: false,
+    phase() { return phaseForTime(world.timeOfDay); },
+    clock() { return clockForTime(world.timeOfDay); },
+    darkness() { return darknessForTime(world.timeOfDay); },
     saveGame() { return writeSave(world); },
     applySave(data) {
       world.player.money = data.money;
@@ -67,6 +73,9 @@ function collideCars(world) {
 
 export function stepWorld(world, input, dt) {
   world.time += dt;
+  if (!world.dayNightFrozen) {
+    world.timeOfDay = (world.timeOfDay + dt / DAY_NIGHT.cycleSeconds) % 1;
+  }
   world.danger.length = 0;
   stepPlayer(world, input, dt);
   if (world.player.inCar && Math.abs(world.player.inCar.speed) > 190) {

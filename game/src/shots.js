@@ -41,8 +41,14 @@ function putPlayerInCar(world, car, x, y, angle, speed) {
   world.player.x = x; world.player.y = y;
 }
 
+// Pinned time-of-day per shot state (frozen in shot mode): title at dusk,
+// foot/drive in day, chase at night so headlights + police lights show.
+export const SHOT_TIMES = { start: 0.76, title: 0.76, foot: 0.45, drive: 0.50, chase: 0.92 };
+
 export function stageShot(name, world) {
   const player = world.player;
+  world.timeOfDay = SHOT_TIMES[name] ?? 0.5;
+  world.dayNightFrozen = true;
   if (name === 'foot') {
     startMission(world);
     world.missions.messageTimer = 0;

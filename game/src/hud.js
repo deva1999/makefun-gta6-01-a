@@ -1,7 +1,7 @@
 // The HUD and the screens: money, health, wanted stars, the mission banner and phone
 // messages across the top, a live minimap in the corner with the player, traffic,
 // police and the objective on it — plus the title, pause, busted and wasted screens.
-import { VIEW_HEIGHT, VIEW_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
+import { VIEW_HEIGHT, VIEW_WIDTH, WORLD_HEIGHT, WORLD_WIDTH, clockForTime, phaseForTime } from './config.js';
 import { currentObjective, MISSIONS } from './missions.js';
 
 export const SCREEN_TITLE = 'title';
@@ -77,8 +77,20 @@ function drawStars(ctx, world) {
   }
 }
 
+function drawClock(ctx, world) {
+  const tod = world.timeOfDay ?? 0.5;
+  const phase = phaseForTime(tod);
+  const icon = phase === 'night' ? '🌙' : phase === 'day' ? '☀️' : phase === 'dusk' ? '🌇' : '🌅';
+  panel(ctx, 16, 16, 118, 40, 0.66);
+  ctx.fillStyle = '#eaf6ff';
+  ctx.font = 'bold 17px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${icon} ${clockForTime(tod)}`, 26, 42);
+}
+
 export function drawHUD(ctx, world, screen) {
   if (screen === SCREEN_TITLE) return;
+  drawClock(ctx, world);
   // Money and health, bottom-left.
   panel(ctx, 16, VIEW_HEIGHT - 86, 208, 70, 0.66);
   ctx.fillStyle = '#7be495';

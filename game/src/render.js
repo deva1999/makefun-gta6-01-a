@@ -1,7 +1,7 @@
 // Rendering: a sun-soaked top-down city with pseudo-3D buildings (walls extruded toward
 // the south-east sun shadow, roofs above), striped avenues, palms, the beach and the bay.
 // Everything is drawn from the world state each frame; nothing is pre-rendered or loaded.
-import { BLOCK, PITCH, ROAD, ROWS, VIEW_HEIGHT, VIEW_WIDTH, WORLD_WIDTH } from './config.js';
+import { BLOCK, PITCH, ROAD, ROWS, VIEW_HEIGHT, VIEW_WIDTH, WORLD_WIDTH, darknessForTime, phaseForTime } from './config.js';
 import { currentObjective } from './missions.js';
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -281,6 +281,58 @@ function drawEffects(ctx, world, cam) {
   }
 }
 
+function drawDayNight(ctx, world, cam) {
+  const tod = world.timeOfDay ?? 0.5;
+  const darkness = darknessForTime(tod);
+  if (darkness <= 0.01) return;
+  const phase = phaseForTime(tod);
+  // Translucent overlay: warm orange at dusk/dawn, deep blue at night.
+  let color;
+  if (phase === 'dusk') color = `rgba(255,110,40,${0.10 + darkness * 0.18})`;
+  else if (phase === 'dawn') color = `rgba(255,150,80,${darkness * 0.16})`;
+  else color = `rgba(8,14,52,${darkness * 0.52})`;
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
+  if (phase === 'night' || phase === 'dusk') {
+    ctx.fillStyle = `rgba(6,10,40,${darkness * 0.28})`;
+    ctx.fillRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
+  }
+  // Streetlight glow pools — positions precomputed in city.lamps (road grid).
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const lampAlpha = 0.10 + darkness * 0.22;
+  for (const lamp of world.city.lamps || []) {
+    const x = lamp.x - cam.x; const y = lamp.y - cam.y;
+    if (x < -60 || y < -60 || x > VIEW_WIDTH + 60 || y > VIEW_HEIGHT + 60) continue;
+    const g = ctx.createRadialGradient(x, y, 2, x, y, 52);
+    g.addColorStop(0, `rgba(255,205,110,${lampAlpha})`);
+    g.addColorStop(1, 'rgba(255,205,110,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, 52, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `rgba(255,230,170,${0.5 * darkness})`;
+    ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill();
+  }
+  // Car headlight cones at night/dusk.
+  if (darkness > 0.25) {
+    for (const car of world.cars) {
+      const x = car.x - cam.x; const y = car.y - cam.y;
+      if (x < -90 || y < -90 || x > VIEW_WIDTH + 90 || y > VIEW_HEIGHT + 90) continue;
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(car.angle);
+      const coneLen = 92; const coneW = 30;
+      const g = ctx.createLinearGradient(24, 0, 24 + coneLen, 0);
+      g.addColorStop(0, `rgba(255,244,180,${0.30 * darkness})`);
+      g.addColorStop(1, 'rgba(255,244,180,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(24, -6); ctx.lineTo(24 + coneLen, -coneW); ctx.lineTo(24 + coneLen, coneW); ctx.lineTo(24, 6);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
+  ctx.restore();
+}
+
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   return {
@@ -295,6 +347,7 @@ export function createRenderer(canvas) {
       drawPlayer(ctx, world, cam);
       drawEffects(ctx, world, cam);
       drawObjective(ctx, world, cam);
+      drawDayNight(ctx, world, cam);
     },
   };
 }
